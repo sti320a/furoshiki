@@ -36,10 +36,10 @@ class Shortly(object):
     def __call__(self, environ, start_response):
         return self.wsgi_app(environ, start_response)
 
-    def on_new_url(selft, request):
+    def on_new_url(self, request):
         error = None
         url = ''
-        if request.method.form['url']:
+        if request.method == 'POST':
             url = request.form['url']
             if not is_valid_url(url):
                 error = 'Please enter a valid URL'
@@ -48,10 +48,6 @@ class Shortly(object):
                 return redirect('/%s+' % short_id)
         return self.render_template('new_url.html', error=error, url=url)
     
-    def is_valid_url(url):
-        parts = urlparse.urlparse(url)
-        return parts.scheme in ('http', 'https')
-
     def insert_url(self, url):
         short_id = self.redis.get('reverse-url:' + url)
         if short_id is not None:
@@ -72,7 +68,29 @@ class Shortly(object):
             base36.append('0123456789abcdefghijklmnopqrstuvwxyz'[i])
         return ''.join(reversed(base36))
 
-def create_app(redis_host='localhost', redis_port=6397, with_static=True):
+    def on_follow_short_link(self, request, short_id):
+        link_target = self.redis.get('url-target:' + short_id)
+        if link_target is None:
+            raise NotFound()
+        self.redis.incr('click-count:' + short_id)
+        return redirect(link_target)
+
+    def on_short_link_details(self, request, short_id):
+        link_target = self.redis.get('url-target:' + short_id)
+        if link_target is None:
+            raise NotFound()
+        click_count = int(self.redis.get('click-count:' + short_id) or 0)
+        return self.render_template('short_link_details.html',
+        link_target=link_target,
+        short_id=short_id,
+        click_count=click_count
+        )
+
+def is_valid_url(url):
+    parts = urlparse(url)
+    return parts.scheme in ('http', 'https')
+
+def create_app(redis_host='localhost', redis_port=6379, with_static=True):
     app = Shortly({
         'redis_host': redis_host,
         'redis_port': redis_port
@@ -87,4 +105,4 @@ if __name__=='__main__':
     from werkzeug.serving import run_simple
     app = create_app()
     print(app)
-    run_simple('127.0.0.1', 4000, app, use_debugger=True, use_reloader=True)
+    run_simple('localhost', 4000, app, use_debugger=True, use_reloader=True)
